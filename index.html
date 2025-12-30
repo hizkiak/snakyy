@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Snake Neon: Cyber Grid Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #050505;
+            font-family: 'Orbitron', sans-serif;
+            color: #0ff;
+            perspective: 1000px;
+        }
+
+        /* 3D Cyber Grid Background */
+        .grid-container {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transform-style: preserve-3d;
+            transform: rotateX(60deg) translateY(-25%);
+            z-index: 1;
+        }
+
+        .grid-line {
+            position: absolute;
+            background: linear-gradient(to bottom, transparent, #0ff, transparent);
+            box-shadow: 0 0 15px #0ff;
+            opacity: 0.15;
+        }
+
+        .grid-v { width: 1px; height: 3000px; animation: flowV 10s linear infinite; }
+        .grid-h { height: 1px; width: 3000px; animation: flowH 10s linear infinite; }
+
+        @keyframes flowV { from { transform: translateZ(-1000px); } to { transform: translateZ(500px); } }
+
+        /* Game Canvas */
+        canvas {
+            position: relative;
+            border: 4px solid #0ff;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.4), inset 0 0 20px rgba(0, 255, 255, 0.2);
+            background-color: rgba(0, 0, 0, 0.85);
+            z-index: 10;
+            border-radius: 8px;
+        }
+
+        /* UI Elements */
+        .ui-score {
+            position: absolute;
+            top: 30px;
+            z-index: 20;
+            display: flex;
+            gap: 30px;
+            font-size: 1.5em;
+            text-shadow: 0 0 10px #0ff;
+        }
+
+        .score-box {
+            background: rgba(0, 20, 20, 0.8);
+            padding: 10px 25px;
+            border: 1px solid #0ff;
+            clip-path: polygon(10% 0, 100% 0, 90% 100%, 0 100%);
+        }
+
+        .branding {
+            position: absolute;
+            bottom: 20px;
+            right: 30px;
+            z-index: 20;
+            font-size: 0.9em;
+            letter-spacing: 3px;
+            color: rgba(0, 255, 255, 0.6);
+            text-transform: uppercase;
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 30px;
+            z-index: 20;
+            font-size: 0.8em;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="grid-container" id="gridBg"></div>
+
+    <div class="ui-score">
+        <div class="score-box">SCORE: <span id="scoreVal">0</span></div>
+        <div class="score-box" style="border-color: #f0f; color: #f0f; text-shadow: 0 0 10px #f0f;">BEST: <span id="highScoreVal">0</span></div>
+    </div>
+
+    <canvas id="gameCanvas" width="500" height="500"></canvas>
+    
+    <div class="instructions">ARROWS TO NAVIGATE</div>
+    <div class="branding">product by kiiakkk</div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreVal = document.getElementById('scoreVal');
+        const highScoreVal = document.getElementById('highScoreVal');
+        
+        const gridSize = 25;
+        const tileCount = canvas.width / gridSize;
+
+        let score = 0;
+        let highScore = localStorage.getItem('snakeHighScore') || 0;
+        let snake = [{ x: 10, y: 10 }];
+        let food = { x: 15, y: 15 };
+        let dx = 0;
+        let dy = 0;
+        let gameInterval;
+        let gameSpeed = 100;
+        let particles = [];
+
+        highScoreVal.textContent = highScore;
+
+        // --- Efek Suara (Web Audio API) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playNote(freq, type, duration) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        // --- Inisialisasi Latar Belakang ---
+        function initGrid() {
+            const grid = document.getElementById('gridBg');
+            for(let i=0; i<30; i++) {
+                const vLine = document.createElement('div');
+                vLine.className = 'grid-line grid-v';
+                vLine.style.left = (i * 3.3) + '%';
+                grid.appendChild(vLine);
+
+                const hLine = document.createElement('div');
+                hLine.className = 'grid-line grid-h';
+                hLine.style.top = (i * 3.3) + '%';
+                grid.appendChild(hLine);
+            }
+        }
+
+        // --- Sistem Partikel ---
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.size = Math.random() * 3 + 1;
+                this.speedX = (Math.random() - 0.5) * 6;
+                this.speedY = (Math.random() - 0.5) * 6;
+                this.life = 1.0;
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= 0.03;
+            }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.life;
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function spawnParticles(x, y, color) {
+            for(let i=0; i<15; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function startGame() {
+            score = 0;
+            snake = [{ x: 10, y: 10 }];
+            food = generateFood();
+            dx = 0; dy = 0;
+            gameSpeed = 100;
+            scoreVal.textContent = score;
+            if (gameInterval) clearInterval(gameInterval);
+            gameInterval = setInterval(gameLoop, gameSpeed);
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+        }
+
+        function update() {
+            if (isGameOver()) {
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('snakeHighScore', highScore);
+                    highScoreVal.textContent = highScore;
+                }
+                playNote(150, 'sawtooth', 0.5);
+                alert(`SYSTEM CRASHED!\nScore: ${score}`);
+                startGame();
+                return;
+            }
+
+            const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+            
+            // Gerak hanya jika arah sudah ditentukan
+            if(dx !== 0 || dy !== 0) {
+                snake.unshift(head);
+                if (head.x === food.x && head.y === food.y) {
+                    score++;
+                    scoreVal.textContent = score;
+                    playNote(440, 'square', 0.1);
+                    spawnParticles(food.x * gridSize + 12, food.y * gridSize + 12, '#f0f');
+                    food = generateFood();
+                    if (gameSpeed > 60) {
+                        gameSpeed -= 2;
+                        clearInterval(gameInterval);
+                        gameInterval = setInterval(gameLoop, gameSpeed);
+                    }
+                } else {
+                    snake.pop();
+                }
+            }
+
+            particles.forEach((p, i) => {
+                p.update();
+                if(p.life <= 0) particles.splice(i, 1);
+            });
+        }
+
+        function draw() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; // Efek trail
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Food (Neon Pulse)
+            const pulse = Math.sin(Date.now() / 100) * 5;
+            ctx.shadowBlur = 15 + pulse;
+            ctx.shadowColor = '#f0f';
+            ctx.fillStyle = '#f0f';
+            ctx.beginPath();
+            ctx.arc(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2, gridSize/3, 0, Math.PI*2);
+            ctx.fill();
+
+            // Draw Snake
+            snake.forEach((segment, index) => {
+                const isHead = index === 0;
+                ctx.shadowBlur = isHead ? 20 : 10;
+                ctx.shadowColor = '#0ff';
+                ctx.fillStyle = isHead ? '#0ff' : 'rgba(0, 255, 255, 0.4)';
+                
+                // Rounded corners body
+                ctx.beginPath();
+                ctx.roundRect(segment.x * gridSize + 1, segment.y * gridSize + 1, gridSize - 2, gridSize - 2, 5);
+                ctx.fill();
+
+                // Eyes for head
+                if(isHead && (dx !== 0 || dy !== 0)) {
+                    ctx.fillStyle = '#000';
+                    ctx.shadowBlur = 0;
+                    // Mata kanan & kiri berdasarkan arah
+                    const eyeSize = 3;
+                    if(dx === 1) { // Kanan
+                        ctx.fillRect(segment.x * gridSize + 18, segment.y * gridSize + 6, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x * gridSize + 18, segment.y * gridSize + 16, eyeSize, eyeSize);
+                    } else if(dx === -1) { // Kiri
+                        ctx.fillRect(segment.x * gridSize + 4, segment.y * gridSize + 6, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x * gridSize + 4, segment.y * gridSize + 16, eyeSize, eyeSize);
+                    } else if(dy === 1) { // Bawah
+                        ctx.fillRect(segment.x * gridSize + 6, segment.y * gridSize + 18, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x * gridSize + 16, segment.y * gridSize + 18, eyeSize, eyeSize);
+                    } else { // Atas
+                        ctx.fillRect(segment.x * gridSize + 6, segment.y * gridSize + 4, eyeSize, eyeSize);
+                        ctx.fillRect(segment.x * gridSize + 16, segment.y * gridSize + 4, eyeSize, eyeSize);
+                    }
+                }
+            });
+
+            particles.forEach(p => p.draw());
+            ctx.shadowBlur = 0;
+        }
+
+        function generateFood() {
+            let nFood;
+            while(true) {
+                nFood = { x: Math.floor(Math.random() * tileCount), y: Math.floor(Math.random() * tileCount) };
+                if(!snake.some(s => s.x === nFood.x && s.y === nFood.y)) break;
+            }
+            return nFood;
+        }
+
+        function isGameOver() {
+            if(dx === 0 && dy === 0) return false;
+            const h = snake[0];
+            return h.x < 0 || h.x >= tileCount || h.y < 0 || h.y >= tileCount ||
+                   snake.slice(1).some(s => s.x === h.x && s.y === h.y);
+        }
+
+        document.addEventListener('keydown', e => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            switch(e.key) {
+                case 'ArrowLeft': if(dx !== 1) { dx = -1; dy = 0; } break;
+                case 'ArrowUp': if(dy !== 1) { dx = 0; dy = -1; } break;
+                case 'ArrowRight': if(dx !== -1) { dx = 1; dy = 0; } break;
+                case 'ArrowDown': if(dy !== -1) { dx = 0; dy = 1; } break;
+            }
+        });
+
+        initGrid();
+        startGame();
+    </script>
+</body>
+</html>
